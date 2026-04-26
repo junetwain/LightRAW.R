@@ -690,7 +690,7 @@ function Update-FileListScrollBarViewport {
         $trackHeight = if ($track -and $track.ActualHeight -gt 0) { [double]$track.ActualHeight } else { [double]$scrollBar.ActualHeight }
         $scrollableHeight = [double]$scrollViewer.ScrollableHeight
         $actualViewportHeight = [double]$scrollViewer.ViewportHeight
-        $minimumThumbHeight = 96.0
+        $minimumThumbHeight = 48.0
 
         if ($scrollableHeight -le 0 -or $trackHeight -le ($minimumThumbHeight + 1.0)) {
             $scrollBar.ViewportSize = $actualViewportHeight
