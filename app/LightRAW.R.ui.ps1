@@ -181,6 +181,12 @@ $script:Window.Add_Loaded({
     if ($script:FileList.Items.Count -gt 0 -and $script:FileList.SelectedIndex -lt 0) {
         $script:FileList.SelectedIndex = 0
     }
+    Register-FileListScrollBarViewportUpdater
+    Update-FileListScrollBarViewport
+    $script:Window.Dispatcher.BeginInvoke([action]{
+        Register-FileListScrollBarViewportUpdater
+        Update-FileListScrollBarViewport
+    }, [System.Windows.Threading.DispatcherPriority]::Loaded) | Out-Null
     Update-PreviewLayout
     Set-InfoPopupDefaultPosition
     Focus-FileList

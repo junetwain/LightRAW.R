@@ -615,6 +615,12 @@ function Refresh-FileListItems {
     if ($null -ne $script:FileList.ItemsSource -and [object]::ReferenceEquals($script:FileList.ItemsSource, $script:Items)) {
         try {
             $script:FileList.Items.Refresh()
+            if ($script:Window -and $script:Window.Dispatcher) {
+                $script:Window.Dispatcher.BeginInvoke([action]{
+                    Register-FileListScrollBarViewportUpdater
+                    Update-FileListScrollBarViewport
+                }, [System.Windows.Threading.DispatcherPriority]::Loaded) | Out-Null
+            }
             return
         } catch {
         }
@@ -622,6 +628,103 @@ function Refresh-FileListItems {
 
     $script:FileList.ItemsSource = $null
     $script:FileList.ItemsSource = $script:Items
+    if ($script:Window -and $script:Window.Dispatcher) {
+        $script:Window.Dispatcher.BeginInvoke([action]{
+            Register-FileListScrollBarViewportUpdater
+            Update-FileListScrollBarViewport
+        }, [System.Windows.Threading.DispatcherPriority]::Loaded) | Out-Null
+    }
+}
+
+function Get-VisualDescendantByType {
+    param(
+        [Parameter(Mandatory)]
+        [System.Windows.DependencyObject]$Root,
+        [Parameter(Mandatory)]
+        [type]$Type
+    )
+
+    $count = [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($Root)
+    for ($i = 0; $i -lt $count; $i++) {
+        $child = [System.Windows.Media.VisualTreeHelper]::GetChild($Root, $i)
+        if ($Type.IsInstanceOfType($child)) {
+            return $child
+        }
+
+        $match = Get-VisualDescendantByType -Root $child -Type $Type
+        if ($match) {
+            return $match
+        }
+    }
+
+    return $null
+}
+
+function Update-FileListScrollBarViewport {
+    if ($script:UpdatingFileListScrollBarViewport -or -not $script:FileList) {
+        return
+    }
+
+    $script:UpdatingFileListScrollBarViewport = $true
+    try {
+        $script:FileList.ApplyTemplate() | Out-Null
+        $scrollViewer = $script:FileList.Template.FindName("PART_ScrollViewer", $script:FileList)
+        if (-not $scrollViewer) {
+            $scrollViewer = Get-VisualDescendantByType -Root $script:FileList -Type ([System.Windows.Controls.ScrollViewer])
+        }
+        if (-not $scrollViewer) {
+            return
+        }
+
+        $scrollViewer.ApplyTemplate() | Out-Null
+        $scrollBar = $scrollViewer.Template.FindName("PART_VerticalScrollBar", $scrollViewer)
+        if (-not $scrollBar) {
+            $scrollBar = Get-VisualDescendantByType -Root $scrollViewer -Type ([System.Windows.Controls.Primitives.ScrollBar])
+        }
+        if (-not $scrollBar -or $scrollBar.Orientation -ne [System.Windows.Controls.Orientation]::Vertical) {
+            return
+        }
+
+        $scrollBar.ApplyTemplate() | Out-Null
+        $track = $scrollBar.Template.FindName("PART_Track", $scrollBar)
+        $trackHeight = if ($track -and $track.ActualHeight -gt 0) { [double]$track.ActualHeight } else { [double]$scrollBar.ActualHeight }
+        $scrollableHeight = [double]$scrollViewer.ScrollableHeight
+        $actualViewportHeight = [double]$scrollViewer.ViewportHeight
+        $minimumThumbHeight = 96.0
+
+        if ($scrollableHeight -le 0 -or $trackHeight -le ($minimumThumbHeight + 1.0)) {
+            $scrollBar.ViewportSize = $actualViewportHeight
+            return
+        }
+
+        $minimumViewportForThumb = ($minimumThumbHeight * $scrollableHeight) / ($trackHeight - $minimumThumbHeight)
+        $scrollBar.ViewportSize = [Math]::Max($actualViewportHeight, $minimumViewportForThumb)
+    } finally {
+        $script:UpdatingFileListScrollBarViewport = $false
+    }
+}
+
+function Register-FileListScrollBarViewportUpdater {
+    if ($script:FileListScrollViewerHooked -or -not $script:FileList) {
+        return
+    }
+
+    $script:FileList.ApplyTemplate() | Out-Null
+    $scrollViewer = $script:FileList.Template.FindName("PART_ScrollViewer", $script:FileList)
+    if (-not $scrollViewer) {
+        $scrollViewer = Get-VisualDescendantByType -Root $script:FileList -Type ([System.Windows.Controls.ScrollViewer])
+    }
+    if (-not $scrollViewer) {
+        return
+    }
+
+    $script:FileListScrollViewerHooked = $true
+    $scrollViewer.Add_ScrollChanged({
+        Update-FileListScrollBarViewport
+    })
+    $scrollViewer.Add_SizeChanged({
+        Update-FileListScrollBarViewport
+    })
 }
 
 function Get-PendingFailedItems {
