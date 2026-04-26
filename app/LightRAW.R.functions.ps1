@@ -1,4 +1,4 @@
-function Get-GroupedImages {
+﻿function Get-GroupedImages {
     param(
         [Parameter(Mandatory)]
         [string]$Path
@@ -131,50 +131,6 @@ function Get-UniquePathInFolder {
     throw "Could not create a unique filename for $FileName in $FolderPath"
 }
 
-if (-not ("RawEmbeddedJpegPreviewExtractor" -as [type])) {
-    Add-Type -TypeDefinition @"
-using System;
-using System.IO;
-
-public static class RawEmbeddedJpegPreviewExtractor {
-    public static byte[] ExtractLargestJpeg(string path, int minLength) {
-        byte[] bytes = File.ReadAllBytes(path);
-        int bestStart = -1;
-        int bestLength = 0;
-        int currentStart = -1;
-
-        for (int i = 0; i < bytes.Length - 1; i++) {
-            if (currentStart < 0) {
-                if (i < bytes.Length - 2 && bytes[i] == 0xFF && bytes[i + 1] == 0xD8 && bytes[i + 2] == 0xFF) {
-                    currentStart = i;
-                    i += 2;
-                }
-                continue;
-            }
-
-            if (bytes[i] == 0xFF && bytes[i + 1] == 0xD9) {
-                int length = i + 2 - currentStart;
-                if (length > bestLength) {
-                    bestStart = currentStart;
-                    bestLength = length;
-                }
-                currentStart = -1;
-                i++;
-            }
-        }
-
-        if (bestStart < 0 || bestLength < minLength) {
-            return null;
-        }
-
-        byte[] jpeg = new byte[bestLength];
-        Buffer.BlockCopy(bytes, bestStart, jpeg, 0, bestLength);
-        return jpeg;
-    }
-}
-"@
-}
-
 function New-BitmapImage {
     param(
         [Parameter(Mandatory)]
@@ -196,39 +152,6 @@ function New-BitmapImage {
     $bitmap.EndInit()
     $bitmap.Freeze()
     return $bitmap
-}
-
-function New-EmbeddedRawPreviewImage {
-    param(
-        [Parameter(Mandatory)]
-        [string]$Path,
-        [double]$TargetWidth,
-        [int]$MinimumDecodeWidth = 128
-    )
-
-    $jpegBytes = [RawEmbeddedJpegPreviewExtractor]::ExtractLargestJpeg($Path, 1024)
-    if (-not $jpegBytes -or $jpegBytes.Length -le 0) {
-        throw "No embedded JPEG preview found in RAW file: $Path"
-    }
-
-    $stream = New-Object System.IO.MemoryStream(,$jpegBytes)
-    try {
-        $bitmap = New-Object System.Windows.Media.Imaging.BitmapImage
-        $bitmap.BeginInit()
-        $bitmap.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-        $bitmap.StreamSource = $stream
-
-        $decodeWidth = [int][Math]::Max($MinimumDecodeWidth, [Math]::Min(2200, [Math]::Round($TargetWidth)))
-        if ($decodeWidth -gt 0) {
-            $bitmap.DecodePixelWidth = $decodeWidth
-        }
-
-        $bitmap.EndInit()
-        $bitmap.Freeze()
-        return $bitmap
-    } finally {
-        $stream.Dispose()
-    }
 }
 
 function New-FullBitmapImage {
@@ -1072,7 +995,7 @@ function Get-ThumbnailBitmap {
         [object]$Item
     )
 
-    if (-not $Item.HasQuickPreview -or -not $Item.PreferredPath) {
+    if (-not $Item.HasQuickPreview -or -not $Item.PreviewPath) {
         return $null
     }
 
@@ -1095,41 +1018,7 @@ function Get-ThumbnailBitmap {
         return $script:PreviewCache[$cacheKey]
     }
 
-    if ($Item.RawPath) {
-        $cacheKey = Get-PreviewCacheKey -Path $Item.RawPath -TargetWidth $targetWidth -TargetHeight $targetHeight -Mode "thumb-raw-shell"
-        if (-not $script:PreviewCache.ContainsKey($cacheKey)) {
-            try {
-                $script:PreviewCache[$cacheKey] = New-ShellThumbnailImage -Path $Item.RawPath -TargetWidth $targetWidth -TargetHeight $targetHeight
-            } catch {
-                $fallbackKey = Get-PreviewCacheKey -Path $Item.RawPath -TargetWidth $targetWidth -TargetHeight $targetHeight -Mode "thumb-raw-direct"
-                if (-not $script:PreviewCache.ContainsKey($fallbackKey)) {
-                    try {
-                        $script:PreviewCache[$fallbackKey] = New-BitmapImage -Path $Item.RawPath -TargetWidth $targetWidth -MinimumDecodeWidth 128
-                    } catch {
-                        $embeddedKey = Get-PreviewCacheKey -Path $Item.RawPath -TargetWidth $targetWidth -TargetHeight $targetHeight -Mode "thumb-raw-embedded"
-                        if (-not $script:PreviewCache.ContainsKey($embeddedKey)) {
-                            $script:PreviewCache[$embeddedKey] = New-EmbeddedRawPreviewImage -Path $Item.RawPath -TargetWidth $targetWidth -MinimumDecodeWidth 128
-                        }
-                        return $script:PreviewCache[$embeddedKey]
-                    }
-                }
-                return $script:PreviewCache[$fallbackKey]
-            }
-        }
-        return $script:PreviewCache[$cacheKey]
-    }
-
     return $null
-}
-
-function Initialize-ThumbnailState {
-    if (-not $script:Items) {
-        return
-    }
-
-    foreach ($item in $script:Items) {
-        $item | Add-Member -NotePropertyName ThumbnailBitmap -NotePropertyValue $null -Force
-    }
 }
 
 function Stop-ThumbnailLoading {
@@ -1145,11 +1034,21 @@ function Update-ThumbnailLoadingStatus {
         return
     }
 
-    $completed = [Math]::Min([int]$script:ThumbnailLoadIndex, $total)
+    $completed = [Math]::Min($script:ThumbnailLoadIndex, $total)
     if ($completed -ge $total) {
         Set-AppStatus -Status "Ready"
     } else {
         Set-AppStatus -Status ("Building thumbnails... {0}/{1}" -f $completed, $total)
+    }
+}
+
+function Initialize-ThumbnailState {
+    if (-not $script:Items) {
+        return
+    }
+
+    foreach ($item in $script:Items) {
+        $item | Add-Member -NotePropertyName ThumbnailBitmap -NotePropertyValue $null -Force
     }
 }
 
@@ -1166,16 +1065,11 @@ function Load-NextThumbnailBatch {
         return
     }
 
-    $batchEnd = [Math]::Min([int]$script:ThumbnailLoadIndex + [Math]::Max(1, [int]$script:ThumbnailBatchSize), $total)
-    for ($index = [int]$script:ThumbnailLoadIndex; $index -lt $batchEnd; $index++) {
+    $batchEnd = [Math]::Min($script:ThumbnailLoadIndex + [Math]::Max(1, $script:ThumbnailBatchSize), $total)
+    for ($index = $script:ThumbnailLoadIndex; $index -lt $batchEnd; $index++) {
         $item = $script:Items[$index]
         if ($null -eq $item.ThumbnailBitmap) {
-            $thumbnail = $null
-            try {
-                $thumbnail = Get-ThumbnailBitmap -Item $item
-            } catch {
-                $thumbnail = $null
-            }
+            $thumbnail = Get-ThumbnailBitmap -Item $item
             $item | Add-Member -NotePropertyName ThumbnailBitmap -NotePropertyValue $thumbnail -Force
         }
     }
@@ -1204,7 +1098,7 @@ function Start-ThumbnailLoading {
 
     if (-not $script:ThumbnailLoadTimer) {
         $script:ThumbnailLoadTimer = New-Object System.Windows.Threading.DispatcherTimer
-        $script:ThumbnailLoadTimer.Interval = [TimeSpan]::FromMilliseconds(25)
+        $script:ThumbnailLoadTimer.Interval = [TimeSpan]::FromMilliseconds(8)
         $script:ThumbnailLoadTimer.Add_Tick({
             Load-NextThumbnailBatch
         })

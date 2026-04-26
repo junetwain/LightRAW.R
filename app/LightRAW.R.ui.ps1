@@ -154,7 +154,13 @@ if ($script:PreviewBackgroundSlider) {
     })
 }
 if ($script:FileList) {
-    $script:FileList.Add_SelectionChanged({ Update-Preview })
+    $script:FileList.Add_SelectionChanged({
+        if ($script:Window -and $script:Window.Dispatcher) {
+            $script:Window.Dispatcher.BeginInvoke([action]{ Update-Preview }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
+        } else {
+            Update-Preview
+        }
+    })
     $script:FileList.Add_PreviewKeyDown({
         param($sender, $e)
 

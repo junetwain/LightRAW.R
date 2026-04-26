@@ -91,7 +91,7 @@
               <ScrollBar x:Name="PART_VerticalScrollBar"
                          Grid.Column="1"
                          Width="12"
-                         Margin="4,4,0,4"
+                           Margin="2,4,0,4"
                          Maximum="{TemplateBinding ScrollableHeight}"
                          ViewportSize="{TemplateBinding ViewportHeight}"
                          Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
